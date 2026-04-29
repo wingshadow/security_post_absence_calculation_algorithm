@@ -16,23 +16,23 @@ public class Test12Scenes2 {
         List<ClassGroupDetailRespDTO> shifts = buildShiftTemplates();
         LocalDate testDate = LocalDate.of(2026, 4, 25);
 
-//        System.out.println("===== 场景1：白班早退，中班正常，夜班未结束 =====");
-//        scene1(shifts, testDate);
-//
-//        System.out.println("\n===== 场景2：仅白班迟到，中班夜班未开始 =====");
-//        scene2(shifts, testDate);
-//
-//        System.out.println("\n===== 场景3：全天无任何打卡记录 =====");
-//        scene3(shifts, testDate);
+        System.out.println("===== 场景1：白班早退，中班正常，夜班未结束 =====");
+        scene1(shifts, testDate);
+
+        System.out.println("\n===== 场景2：仅白班迟到，中班夜班未开始 =====");
+        scene2(shifts, testDate);
+
+        System.out.println("\n===== 场景3：全天无任何打卡记录 =====");
+        scene3(shifts, testDate);
 
         System.out.println("\n===== 场景4：跨天漏打卡（4.25 18:00 → 4.27 08:00 断档）=====");
         scene4(shifts, testDate);
 
-//        System.out.println("\n===== 场景5：中班未打卡，夜班正常 =====");
-//        scene5(shifts, testDate);
-//
-//        System.out.println("\n===== 场景6：全勤（无任何迟到早退）=====");
-//        scene6(shifts, testDate);
+        System.out.println("\n===== 场景5：中班未打卡，夜班正常 =====");
+        scene5(shifts, testDate);
+
+        System.out.println("\n===== 场景6：全勤（无任何迟到早退）=====");
+        scene6(shifts, testDate);
     }
 
     // 场景1：白班早退，中班正常，夜班未结束
@@ -51,6 +51,7 @@ public class Test12Scenes2 {
                     r.date + " | 班次" + r.shiftId +
                             " | " + r.shiftStart + "-" + r.shiftEnd +
                             " | 缺勤 " + r.absentStart + "-" + r.absentEnd +
+                            " | 打卡 "+"-"+ r.openTime +"-"+ r.openEnd+
                             " | " + r.absentMinutes + "min"
             );
         });
@@ -68,6 +69,7 @@ public class Test12Scenes2 {
                     r.date + " | 班次" + r.shiftId +
                             " | " + r.shiftStart + "-" + r.shiftEnd +
                             " | 缺勤 " + r.absentStart + "-" + r.absentEnd +
+                            " | 打卡 "+"-"+ r.openTime +"-"+ r.openEnd+
                             " | " + r.absentMinutes + "min"
             );
         });
@@ -81,6 +83,7 @@ public class Test12Scenes2 {
                     r.date + " | 班次" + r.shiftId +
                             " | " + r.shiftStart + "-" + r.shiftEnd +
                             " | 缺勤 " + r.absentStart + "-" + r.absentEnd +
+                            " | 打卡 "+"-"+ r.openTime +"-"+ r.openEnd+
                             " | " + r.absentMinutes + "min"
             );
         });
@@ -102,6 +105,7 @@ public class Test12Scenes2 {
                     r.date + " | 班次" + r.shiftId +
                             " | " + r.shiftStart + "-" + r.shiftEnd +
                             " | 缺勤 " + r.absentStart + "-" + r.absentEnd +
+                            " | 打卡 "+"-"+ r.openTime +"-"+ r.openEnd+
                             " | " + r.absentMinutes + "min"
             );
         });
@@ -123,6 +127,7 @@ public class Test12Scenes2 {
                     r.date + " | 班次" + r.shiftId +
                             " | " + r.shiftStart + "-" + r.shiftEnd +
                             " | 缺勤 " + r.absentStart + "-" + r.absentEnd +
+                            " | 打卡 "+"-"+ r.openTime +"-"+ r.openEnd+
                             " | " + r.absentMinutes + "min"
             );
         });
@@ -148,6 +153,7 @@ public class Test12Scenes2 {
                     r.date + " | 班次" + r.shiftId +
                             " | " + r.shiftStart + "-" + r.shiftEnd +
                             " | 缺勤 " + r.absentStart + "-" + r.absentEnd +
+                            " | 打卡 "+"-"+ r.openTime +"-"+ r.openEnd+
                             " | " + r.absentMinutes + "min"
             );
         });

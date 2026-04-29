@@ -2,189 +2,238 @@ package org.example.doubao2;
 
 import org.example.ClassGroupDetailRespDTO;
 import org.example.IotDutyIntervalDO;
+
 import java.time.*;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class TimeEngine {
 
-    public static Map<String, Long> calc(List<ClassGroupDetailRespDTO> templates, List<IotDutyIntervalDO> duties) {
-        Map<String, Long> result = new LinkedHashMap<>();
-        if (duties == null || duties.isEmpty()) return result;
-
-        // 排序打卡
-        duties.sort(Comparator.comparing(IotDutyIntervalDO::getStartTime));
-        LocalDateTime min = duties.get(0).getStartTime();
-        LocalDateTime max = duties.stream().map(IotDutyIntervalDO::getEndTime).max(LocalDateTime::compareTo).get();
-
-        // 生成连续班次（白→中→夜→白→中→夜）
-        List<Shift> shifts = buildShifts(templates, min, max);
-
-        // 计算每个班次
-        for (Shift s : shifts) {
-            if (!s.start.isBefore(max)) continue;
-
-            long covered = 0;
-            for (IotDutyIntervalDO d : duties) {
-                covered += overlap(s.start, s.end, d.getStartTime(), d.getEndTime());
-            }
-
-            long total = Duration.between(s.start, s.end).toMinutes();
-            long absent = Math.max(0, total - covered);
-
-            // ✅ 只保留【有缺勤】的班次（满足你最后要求）
-            if (absent > 0) {
-                result.put(format(s, covered, absent), absent);
-            }
-        }
-        return result;
-    }
+    // =========================================================
+    // 对外接口
+    // =========================================================
 
     public static List<AbsenceDetail> calc2(
             List<ClassGroupDetailRespDTO> templates,
             List<IotDutyIntervalDO> duties) {
 
         List<AbsenceDetail> result = new ArrayList<>();
-        if (duties == null || duties.isEmpty()) return result;
+        if (duties == null || duties.isEmpty()) {
+            return result;
+        }
 
         duties.sort(Comparator.comparing(IotDutyIntervalDO::getStartTime));
 
-        LocalDateTime min = duties.get(0).getStartTime();
-        LocalDateTime max = duties.stream()
+        LocalDateTime dutyMin = duties.get(0).getStartTime();
+        LocalDateTime dutyMax = duties.stream()
                 .map(IotDutyIntervalDO::getEndTime)
                 .max(LocalDateTime::compareTo)
-                .get();
+                .orElseThrow(() -> new RuntimeException("duties endTime 为空"));
 
-        List<Shift> shifts = buildShifts(templates, min, max);
+        List<Shift> shifts = buildShifts(templates, dutyMin.toLocalDate(), dutyMax);
 
         for (Shift s : shifts) {
-
-            if (!s.start.isBefore(max)) continue;
-
-            // 1. 收集覆盖区间
-            List<Interval> covers = new ArrayList<>();
-
-            for (IotDutyIntervalDO d : duties) {
-                LocalDateTime cs = s.start.isAfter(d.getStartTime())
-                        ? s.start
-                        : d.getStartTime();
-
-                LocalDateTime ce = s.end.isBefore(d.getEndTime())
-                        ? s.end
-                        : d.getEndTime();
-
-                if (cs.isBefore(ce)) {
-                    covers.add(new Interval(cs, ce));
-                }
+            if (!s.start.isBefore(dutyMax)) {
+                break;
             }
-
-            covers.sort(Comparator.comparing(i -> i.start));
-
-            // 2. 扫描缺勤区间
-            LocalDateTime cursor = s.start;
-
-            for (Interval c : covers) {
-
-                if (cursor.isBefore(c.start)) {
-
-                    add(result, s, cursor, c.start);
-                }
-
-                if (cursor.isBefore(c.end)) {
-                    cursor = c.end;
-                }
-            }
-
-            // 3. 尾部缺勤
-            if (cursor.isBefore(s.end)) {
-                add(result, s, cursor, s.end);
-            }
+            processShift(s, duties, result);
         }
 
         return result;
     }
 
-    // ==================== 核心：自动连续排班（白→中→夜→白） ====================
-    private static List<Shift> buildShifts(List<ClassGroupDetailRespDTO> templates, LocalDateTime min, LocalDateTime max) {
+    public static Map<String, Long> calc(
+            List<ClassGroupDetailRespDTO> templates,
+            List<IotDutyIntervalDO> duties) {
+
+        Map<String, Long> result = new LinkedHashMap<>();
+        calc2(templates, duties).stream()
+                .filter(d -> d.absentMinutes > 0)
+                .forEach(d -> result.merge(formatKey(d), d.absentMinutes, Long::sum));
+        return result;
+    }
+
+    // =========================================================
+    // 核心：单班次缺勤扫描
+    // =========================================================
+
+    private static void processShift(
+            Shift s,
+            List<IotDutyIntervalDO> duties,
+            List<AbsenceDetail> result) {
+
+        List<Interval> covers = duties.stream()
+                .map(d -> intersect(s.start, s.end, d.getStartTime(), d.getEndTime()))
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparing(i -> i.start))
+                .collect(Collectors.toList());
+
+        List<Interval> merged = merge(covers);
+
+        LocalDateTime cursor = s.start;
+        boolean hasAbsence = false;
+
+        for (Interval c : merged) {
+            if (cursor.isBefore(c.start)) {
+                addAbsence(result, s, cursor, c.start, merged);
+                hasAbsence = true;
+            }
+            if (cursor.isBefore(c.end)) {
+                cursor = c.end;
+            }
+        }
+
+        if (cursor.isBefore(s.end)) {
+            addAbsence(result, s, cursor, s.end, merged);
+            hasAbsence = true;
+        }
+
+        if (!hasAbsence) {
+            AbsenceDetail d = new AbsenceDetail();
+            d.date          = s.date;
+            d.shiftId       = s.template.getId();
+            d.shiftStart    = s.start;
+            d.shiftEnd      = s.end;
+            d.absentStart   = null;
+            d.absentEnd     = null;
+            d.absentMinutes = 0;
+            d.openTime      = s.start;
+            d.openEnd       = s.end;
+            result.add(d);
+        }
+    }
+
+    // =========================================================
+    // openTime/openEnd 填充
+    // =========================================================
+
+    private static void addAbsence(
+            List<AbsenceDetail> result,
+            Shift s,
+            LocalDateTime absentStart,
+            LocalDateTime absentEnd,
+            List<Interval> merged) {
+
+        long minutes = Duration.between(absentStart, absentEnd).toMinutes();
+        if (minutes <= 0) {
+            return;
+        }
+
+        AbsenceDetail d = new AbsenceDetail();
+        d.date          = s.date;
+        d.shiftId       = s.template.getId();
+        d.shiftStart    = s.start;
+        d.shiftEnd      = s.end;
+        d.absentStart   = absentStart;
+        d.absentEnd     = absentEnd;
+        d.absentMinutes = minutes;
+
+        d.openTime = merged.stream()
+                .filter(i -> !i.end.isAfter(absentStart))
+                .max(Comparator.comparing(i -> i.end))
+                .map(i -> i.end)
+                .orElse(s.start);
+
+        d.openEnd = merged.stream()
+                .filter(i -> !i.start.isBefore(absentEnd))
+                .min(Comparator.comparing(i -> i.start))
+                .map(i -> i.start)
+                .orElse(s.end);
+
+        result.add(d);
+    }
+
+    // =========================================================
+    // buildShifts
+    // =========================================================
+
+    private static List<Shift> buildShifts(
+            List<ClassGroupDetailRespDTO> templates,
+            LocalDate startDate,
+            LocalDateTime max) {
+
         List<Shift> result = new ArrayList<>();
-        LocalDateTime cursor = min;
+        LocalDate curDate = startDate;
         int idx = 0;
 
-        while (cursor.isBefore(max)) {
+        while (true) {
             ClassGroupDetailRespDTO t = templates.get(idx % templates.size());
             LocalTime st = LocalTime.parse(t.getClassStartTime());
             LocalTime et = LocalTime.parse(t.getClassEndTime());
-            LocalDate baseDate = cursor.toLocalDate();
-            LocalDateTime start = baseDate.atTime(st);
-            LocalDateTime end;
 
-            if (et.isBefore(st)) {
-                end = start.plusDays(1).withHour(et.getHour()).withMinute(et.getMinute());
+            LocalDateTime shiftStart = curDate.atTime(st);
+            LocalDateTime shiftEnd;
+
+            if (et.isBefore(st) || et.equals(st)) {
+                shiftEnd = shiftStart.plusDays(1)
+                        .withHour(et.getHour()).withMinute(et.getMinute()).withSecond(0);
             } else {
-                end = baseDate.atTime(et);
+                shiftEnd = curDate.atTime(et);
             }
 
-            cursor = end;
-            result.add(new Shift(baseDate, t, start, end));
+            if (!shiftStart.isBefore(max)) {
+                break;
+            }
+
+            result.add(new Shift(curDate, t, shiftStart, shiftEnd));
+
+            curDate = shiftEnd.toLocalDate();
             idx++;
         }
+
         return result;
     }
 
-    // ==================== 区间重叠计算 ====================
-    private static long overlap(LocalDateTime s1, LocalDateTime e1, LocalDateTime s2, LocalDateTime e2) {
+    // =========================================================
+    // 工具方法
+    // =========================================================
+
+    private static Interval intersect(
+            LocalDateTime s1, LocalDateTime e1,
+            LocalDateTime s2, LocalDateTime e2) {
         LocalDateTime s = s1.isAfter(s2) ? s1 : s2;
         LocalDateTime e = e1.isBefore(e2) ? e1 : e2;
-        return s.isBefore(e) ? Duration.between(s, e).toMinutes() : 0;
+        return s.isBefore(e) ? new Interval(s, e) : null;
     }
 
-    // ==================== 输出格式 ====================
-    private static String format(Shift s, long covered, long absent) {
-        return String.format("%s | %d | %s-%s | %d |%d",
-                s.date,
-                s.template.getId(),
-                s.template.getClassStartTime(),
-                s.template.getClassEndTime(),
-                covered,
-                absent);
+    private static List<Interval> merge(List<Interval> sorted) {
+        List<Interval> merged = new ArrayList<>();
+        for (Interval cur : sorted) {
+            if (merged.isEmpty() || !merged.get(merged.size() - 1).end.isAfter(cur.start)) {
+                merged.add(new Interval(cur.start, cur.end));
+            } else {
+                Interval last = merged.get(merged.size() - 1);
+                if (cur.end.isAfter(last.end)) {
+                    last.end = cur.end;
+                }
+            }
+        }
+        return merged;
     }
 
-    // ==================== 内部班次结构 ====================
+    private static String formatKey(AbsenceDetail d) {
+        return String.format("%s|%d|%s-%s",
+                d.date, d.shiftId,
+                d.shiftStart.toLocalTime(),
+                d.shiftEnd.toLocalTime());
+    }
+
+    // =========================================================
+    // 内部结构（仅 Shift 和 Interval 保留，AbsenceDetail 已移出）
+    // =========================================================
+
     static class Shift {
         LocalDate date;
         ClassGroupDetailRespDTO template;
-        LocalDateTime start;
-        LocalDateTime end;
+        LocalDateTime start, end;
 
         Shift(LocalDate d, ClassGroupDetailRespDTO t, LocalDateTime s, LocalDateTime e) {
-            this.date = d;
-            this.template = t;
-            this.start = s;
-            this.end = e;
+            date = d; template = t; start = s; end = e;
         }
     }
 
-
-
-
-    private static void add(
-            List<AbsenceDetail> result,
-            Shift s,
-            LocalDateTime start,
-            LocalDateTime end) {
-
-        long minutes = Duration.between(start, end).toMinutes();
-
-        if (minutes <= 0) return;
-
-        AbsenceDetail d = new AbsenceDetail();
-        d.date = s.date;
-        d.shiftId = s.template.getId();
-        d.shiftStart = s.start;
-        d.shiftEnd = s.end;
-        d.absentStart = start;
-        d.absentEnd = end;
-        d.absentMinutes = minutes;
-
-        result.add(d);
+    static class Interval {
+        LocalDateTime start, end;
+        Interval(LocalDateTime s, LocalDateTime e) { start = s; end = e; }
     }
 }

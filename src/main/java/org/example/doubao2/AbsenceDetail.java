@@ -18,5 +18,8 @@ public class AbsenceDetail {
     LocalDateTime absentStart;  // 缺勤开始
     LocalDateTime absentEnd;    // 缺勤结束
 
+    LocalDateTime openTime;
+    LocalDateTime openEnd;   // 打开结束
+
     long absentMinutes;         // 缺勤时长（分钟）
 }
